@@ -1,0 +1,280 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+
+type Entity = {
+  name: string;
+  value: string;
+  confidence?: number;
+};
+
+type Result = {
+  phrase_id: string;
+  text: string;
+  entities: Entity[];
+  status: "pending" | "awaiting_confirmation" | "confirmed";
+};
+
+type ServerMessage =
+  | { type: "ready" }
+  | { type: "result"; result: Result }
+  | { type: "prompt_confirmation"; phrase_id: string; prompt: string }
+  | { type: "retry"; phrase_id: string }
+  | { type: "state"; results: Result[] };
+
+const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/ws";
+
+export function ChatClient() {
+  const [connected, setConnected] = useState(false);
+  const [results, setResults] = useState<Record<string, Result>>({});
+  const [confirmPrompt, setConfirmPrompt] = useState<string | null>(null);
+  const [confirmPhraseId, setConfirmPhraseId] = useState<string | null>(null);
+  const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
+  const [inputText, setInputText] = useState("This is a demo utterance");
+  const [log, setLog] = useState<string[]>([]);
+
+  const socketRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    const socket = new WebSocket(wsUrl);
+    socketRef.current = socket;
+
+    socket.onopen = () => {
+      setConnected(true);
+      pushLog("Connected to backend");
+    };
+
+    socket.onclose = () => {
+      setConnected(false);
+      pushLog("Disconnected");
+    };
+
+    socket.onmessage = (event) => {
+      const msg: ServerMessage = JSON.parse(event.data);
+      handleServerMessage(msg);
+    };
+
+    return () => {
+      socket.close();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleServerMessage = (msg: ServerMessage) => {
+    switch (msg.type) {
+      case "ready":
+        pushLog("Backend ready");
+        break;
+      case "result":
+        setResults((prev) => ({ ...prev, [msg.result.phrase_id]: msg.result }));
+        break;
+      case "prompt_confirmation":
+        setConfirmPrompt(msg.prompt);
+        setConfirmPhraseId(msg.phrase_id);
+        setAwaitingConfirmation(true);
+        break;
+      case "retry":
+        setConfirmPrompt(null);
+        setConfirmPhraseId(null);
+        setAwaitingConfirmation(false);
+        pushLog(`Retry phrase ${msg.phrase_id}`);
+        break;
+      case "state":
+        setResults((prev) => ({ ...prev, ...toRecord(msg.results) }));
+        break;
+      default:
+        break;
+    }
+  };
+
+  const sendJson = (payload: object) => {
+    if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+      pushLog("Socket not connected");
+      return;
+    }
+    socketRef.current.send(JSON.stringify(payload));
+  };
+
+  const handleTranscript = (text: string) => {
+    const classification = classifyConfirmation(text);
+
+    if (awaitingConfirmation && confirmPhraseId) {
+      if (classification === "yes") {
+        sendConfirm(true);
+        pushLog(`Auto-confirmed ${confirmPhraseId}`);
+        return;
+      }
+      if (classification === "no") {
+        sendConfirm(false);
+        pushLog(`Auto-declined ${confirmPhraseId}`);
+        return;
+      }
+      // Treat as a fresh phrase if not a confirmation keyword
+      pushLog("Not a yes/no, treating as new phrase");
+      clearConfirmation();
+    }
+
+    sendJson({
+      type: "stt_result",
+      text,
+      entities: [],
+    });
+    pushLog(`Sent STT text: ${text}`);
+  };
+
+  const handleSendStt = () => {
+    handleTranscript(inputText);
+  };
+
+  const sendConfirm = (confirmed: boolean) => {
+    if (!confirmPhraseId) return;
+    sendJson({ type: "confirm", phrase_id: confirmPhraseId, confirmed });
+    clearConfirmation();
+  };
+
+  const clearConfirmation = () => {
+    setConfirmPrompt(null);
+    setConfirmPhraseId(null);
+    setAwaitingConfirmation(false);
+  };
+
+  const pushLog = (entry: string) => {
+    setLog((prev) => [entry, ...prev].slice(0, 30));
+  };
+
+  const resultList = useMemo(() => Object.values(results), [results]);
+
+  return (
+    <div style={{ maxWidth: 960, margin: "0 auto", padding: "24px" }}>
+      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 700 }}>Voice Agent</div>
+          <div style={{ fontSize: 14, color: "#94a3b8" }}>Entity capture with confirmation</div>
+        </div>
+        <div
+          style={{
+            padding: "6px 10px",
+            borderRadius: 12,
+            background: connected ? "#10b981" : "#f43f5e",
+            color: "#0f172a",
+            fontWeight: 700,
+          }}
+        >
+          {connected ? "Connected" : "Disconnected"}
+        </div>
+      </header>
+
+      <section style={{ marginTop: 16, padding: 16, background: "#1e293b", borderRadius: 12 }}>
+        <div style={{ fontWeight: 700, marginBottom: 8 }}>Simulate STT payload</div>
+        <textarea
+          value={inputText}
+          onChange={(e) => setInputText(e.target.value)}
+          placeholder="Say something..."
+          style={{ width: "100%", minHeight: 80, padding: 12, borderRadius: 8, border: "1px solid #334155", background: "#0f172a", color: "#e2e8f0" }}
+        />
+        <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+          <button
+            onClick={handleSendStt}
+            style={{ padding: "10px 14px", borderRadius: 8, background: "#38bdf8", color: "#0f172a", border: "none", fontWeight: 700 }}
+          >
+            Send STT result
+          </button>
+          <button
+            onClick={() => {
+              setInputText("This is a demo utterance");
+              handleSendStt();
+            }}
+            style={{ padding: "10px 14px", borderRadius: 8, background: "#22c55e", color: "#0f172a", border: "none", fontWeight: 700 }}
+          >
+            Send demo
+          </button>
+          <button
+            onClick={() => sendJson({ type: "request_state" })}
+            style={{ padding: "10px 14px", borderRadius: 8, background: "#c084fc", color: "#0f172a", border: "none", fontWeight: 700 }}
+          >
+            Sync state
+          </button>
+        </div>
+      </section>
+
+      {confirmPrompt && (
+        <section style={{ marginTop: 16, padding: 16, background: "#0f172a", borderRadius: 12, border: "1px solid #334155" }}>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>{confirmPrompt}</div>
+          <div style={{ color: "#94a3b8", marginBottom: 8, fontSize: 14 }}>
+            Say "yes" / "no" (or provide a new answer to replace).
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={() => sendConfirm(true)}
+              style={{ padding: "10px 14px", borderRadius: 8, background: "#22c55e", color: "#0f172a", border: "none", fontWeight: 700 }}
+            >
+              Yes
+            </button>
+            <button
+              onClick={() => sendConfirm(false)}
+              style={{ padding: "10px 14px", borderRadius: 8, background: "#f97316", color: "#0f172a", border: "none", fontWeight: 700 }}
+            >
+              No, retry
+            </button>
+          </div>
+        </section>
+      )}
+
+      <section style={{ marginTop: 16, padding: 16, background: "#0f172a", borderRadius: 12, border: "1px solid #334155" }}>
+        <div style={{ fontWeight: 700, marginBottom: 8 }}>Results</div>
+        {resultList.length === 0 && <div style={{ color: "#94a3b8" }}>No results yet.</div>}
+        {resultList.map((r) => (
+          <div key={r.phrase_id} style={{ marginBottom: 10, padding: 12, borderRadius: 8, background: "#1e293b" }}>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <div style={{ fontWeight: 700 }}>{r.phrase_id}</div>
+              <span style={{ color: statusColor(r.status), fontWeight: 700 }}>{r.status}</span>
+            </div>
+            <div style={{ marginTop: 4 }}>{r.text}</div>
+            <div style={{ marginTop: 6, color: "#94a3b8", fontSize: 14 }}>
+              Entities: {r.entities.map((e) => `${e.name}=${e.value}`).join(", ") || "none"}
+            </div>
+          </div>
+        ))}
+      </section>
+
+      <section style={{ marginTop: 16, padding: 16, background: "#0f172a", borderRadius: 12, border: "1px solid #334155" }}>
+        <div style={{ fontWeight: 700, marginBottom: 8 }}>Log</div>
+        <div style={{ maxHeight: 200, overflowY: "auto", display: "grid", gap: 6 }}>
+          {log.map((l, idx) => (
+            <div key={idx} style={{ color: "#94a3b8" }}>
+              {l}
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function statusColor(status: Result["status"]) {
+  if (status === "confirmed") return "#22c55e";
+  if (status === "awaiting_confirmation") return "#f59e0b";
+  return "#94a3b8";
+}
+
+function toRecord(list: Result[]) {
+  return list.reduce<Record<string, Result>>((acc, item) => {
+    acc[item.phrase_id] = item;
+    return acc;
+  }, {});
+}
+
+const YES_TERMS = ["yes", "yeah", "yep", "correct", "confirm", "looks good", "that is right", "that's right", "right", "sure"];
+const NO_TERMS = ["no", "nope", "wrong", "try again", "not correct", "redo", "retry"];
+
+function classifyConfirmation(text: string): "yes" | "no" | "other" {
+  const normalized = normalize(text);
+  if (!normalized) return "other";
+  if (YES_TERMS.some((t) => normalized === t)) return "yes";
+  if (NO_TERMS.some((t) => normalized === t)) return "no";
+  return "other";
+}
+
+function normalize(text: string) {
+  return text.trim().toLowerCase().replace(/[.!?\s]+$/g, "");
+}

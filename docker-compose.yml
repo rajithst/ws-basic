@@ -1,0 +1,25 @@
+version: "3.9"
+services:
+  backend:
+    image: python:3.11-slim
+    working_dir: /app/backend
+    command: sh -c "pip install --no-cache-dir -e .[dev] && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./:/app
+    env_file:
+      - backend/.env
+
+  frontend:
+    image: node:20
+    working_dir: /app/frontend
+    command: sh -c "npm install && npm run dev -- --hostname 0.0.0.0 --port 3000"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./:/app
+    env_file:
+      - frontend/.env.local
+    depends_on:
+      - backend
