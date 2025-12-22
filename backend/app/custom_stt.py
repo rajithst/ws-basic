@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Callable, Dict, Optional
+from typing import Callable, Dict
 import asyncio
 
 # Mocking Aiola types for the POC
@@ -10,7 +10,7 @@ class LiveEvents(Enum):
     Disconnect = "disconnect"
     Error = "error"
 
-class CustomSTT:
+class MockConnection:
     def __init__(self):
         self.callbacks: Dict[LiveEvents, Callable] = {}
         self.connected = False
@@ -65,3 +65,21 @@ class CustomSTT:
         self.connected = False
         if LiveEvents.Disconnect in self.callbacks:
             await self._safe_callback(LiveEvents.Disconnect)
+
+class MockSTTInterface:
+    def stream(self, lang_code: str = 'en') -> MockConnection:
+        return MockConnection()
+
+class MockToken:
+    def __init__(self, access_token: str):
+        self.access_token = access_token
+
+class AiolaClient:
+    def __init__(self, access_token: str):
+        self.access_token = access_token
+        self.stt = MockSTTInterface()
+
+    @staticmethod
+    def grant_token(api_key: str) -> MockToken:
+        # Mock network call
+        return MockToken(access_token=f"mock_token_for_{api_key}")

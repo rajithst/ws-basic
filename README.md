@@ -1,6 +1,6 @@
 # Voice Agent (Python + Next.js)
 
-Web-based AI chat agent with a Python FastAPI WebSocket backend and Next.js frontend. The agent captures entities per predefined phrase, asks for confirmation, and moves to the next phrase. STT is provided by your custom endpoint; Azure Speech handles TTS; Azure OpenAI can enrich entities.
+Web-based AI chat agent with a Python FastAPI WebSocket backend and Next.js frontend. The agent captures entities per interaction, asks for confirmation, and handles dynamic conversation flow. STT is provided by your custom endpoint; Azure Speech handles TTS; Azure OpenAI can enrich entities.
 
 ## Structure
 - backend: FastAPI WebSocket server

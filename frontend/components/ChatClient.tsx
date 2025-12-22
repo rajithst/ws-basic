@@ -9,7 +9,7 @@ type Entity = {
 };
 
 type Result = {
-  phrase_id: string;
+  interaction_id: string;
   text: string;
   entities: Entity[];
   status: "pending" | "awaiting_confirmation" | "confirmed";
@@ -18,8 +18,8 @@ type Result = {
 type ServerMessage =
   | { type: "ready" }
   | { type: "result"; result: Result }
-  | { type: "prompt_confirmation"; phrase_id: string; prompt: string }
-  | { type: "retry"; phrase_id: string }
+  | { type: "prompt_confirmation"; interaction_id: string; prompt: string }
+  | { type: "retry"; interaction_id: string }
   | { type: "state"; results: Result[] };
 
 const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/ws";
@@ -28,7 +28,7 @@ export function ChatClient() {
   const [connected, setConnected] = useState(false);
   const [results, setResults] = useState<Record<string, Result>>({});
   const [confirmPrompt, setConfirmPrompt] = useState<string | null>(null);
-  const [confirmPhraseId, setConfirmPhraseId] = useState<string | null>(null);
+  const [confirmInteractionId, setConfirmInteractionId] = useState<string | null>(null);
   const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
   const [inputText, setInputText] = useState("This is a demo utterance");
   const [log, setLog] = useState<string[]>([]);
@@ -109,18 +109,18 @@ export function ChatClient() {
         pushLog("Backend ready");
         break;
       case "result":
-        setResults((prev) => ({ ...prev, [msg.result.phrase_id]: msg.result }));
+        setResults((prev) => ({ ...prev, [msg.result.interaction_id]: msg.result }));
         break;
       case "prompt_confirmation":
         setConfirmPrompt(msg.prompt);
-        setConfirmPhraseId(msg.phrase_id);
+        setConfirmInteractionId(msg.interaction_id);
         setAwaitingConfirmation(true);
         break;
       case "retry":
         setConfirmPrompt(null);
-        setConfirmPhraseId(null);
+        setConfirmInteractionId(null);
         setAwaitingConfirmation(false);
-        pushLog(`Retry phrase ${msg.phrase_id}`);
+        pushLog(`Retry interaction ${msg.interaction_id}`);
         break;
       case "state":
         setResults((prev) => ({ ...prev, ...toRecord(msg.results) }));
@@ -141,19 +141,19 @@ export function ChatClient() {
   const handleTranscript = (text: string) => {
     const classification = classifyConfirmation(text);
 
-    if (awaitingConfirmation && confirmPhraseId) {
+    if (awaitingConfirmation && confirmInteractionId) {
       if (classification === "yes") {
         sendConfirm(true);
-        pushLog(`Auto-confirmed ${confirmPhraseId}`);
+        pushLog(`Auto-confirmed ${confirmInteractionId}`);
         return;
       }
       if (classification === "no") {
         sendConfirm(false);
-        pushLog(`Auto-declined ${confirmPhraseId}`);
+        pushLog(`Auto-declined ${confirmInteractionId}`);
         return;
       }
-      // Treat as a fresh phrase if not a confirmation keyword
-      pushLog("Not a yes/no, treating as new phrase");
+      // Treat as a fresh interaction if not a confirmation keyword
+      pushLog("Not a yes/no, treating as new interaction");
       clearConfirmation();
     }
 
@@ -170,14 +170,14 @@ export function ChatClient() {
   };
 
   const sendConfirm = (confirmed: boolean) => {
-    if (!confirmPhraseId) return;
-    sendJson({ type: "confirm", phrase_id: confirmPhraseId, confirmed });
+    if (!confirmInteractionId) return;
+    sendJson({ type: "confirm", interaction_id: confirmInteractionId, confirmed });
     clearConfirmation();
   };
 
   const clearConfirmation = () => {
     setConfirmPrompt(null);
-    setConfirmPhraseId(null);
+    setConfirmInteractionId(null);
     setAwaitingConfirmation(false);
   };
 
@@ -285,9 +285,9 @@ export function ChatClient() {
         <div style={{ fontWeight: 700, marginBottom: 8 }}>Results</div>
         {resultList.length === 0 && <div style={{ color: "#94a3b8" }}>No results yet.</div>}
         {resultList.map((r) => (
-          <div key={r.phrase_id} style={{ marginBottom: 10, padding: 12, borderRadius: 8, background: "#1e293b" }}>
+          <div key={r.interaction_id} style={{ marginBottom: 10, padding: 12, borderRadius: 8, background: "#1e293b" }}>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <div style={{ fontWeight: 700 }}>{r.phrase_id}</div>
+              <div style={{ fontWeight: 700 }}>{r.interaction_id}</div>
               <span style={{ color: statusColor(r.status), fontWeight: 700 }}>{r.status}</span>
             </div>
             <div style={{ marginTop: 4 }}>{r.text}</div>
@@ -320,7 +320,7 @@ function statusColor(status: Result["status"]) {
 
 function toRecord(list: Result[]) {
   return list.reduce<Record<string, Result>>((acc, item) => {
-    acc[item.phrase_id] = item;
+    acc[item.interaction_id] = item;
     return acc;
   }, {});
 }

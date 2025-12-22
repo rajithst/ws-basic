@@ -1,9 +1,10 @@
 import json
+import os
 from typing import Any, Dict
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from app.custom_stt import CustomSTT, LiveEvents
+from app.custom_stt import AiolaClient, LiveEvents
 from app.schemas import (
     ConfirmMessage,
     Entity,
@@ -22,11 +23,19 @@ class VoiceSession:
     def __init__(self, websocket: WebSocket):
         self.websocket = websocket
         self.state = SessionState()
-        self.stt = CustomSTT()
+        self.connection = None
         self._setup_stt()
 
     def _setup_stt(self) -> None:
-        @self.stt.on(LiveEvents.Structured)
+        # Authenticate and create client (Mock flow matching real Aiola usage)
+        api_key = os.getenv("AIOLA_API_KEY") or "dummy_key"
+        token_result = AiolaClient.grant_token(api_key=api_key)
+        client = AiolaClient(access_token=token_result.access_token)
+        
+        # Create streaming connection
+        self.connection = client.stt.stream(lang_code='en')
+
+        @self.connection.on(LiveEvents.Structured)
         async def on_structured(data: Dict[str, Any]) -> None:
             entities = [Entity(**e) for e in data.get("entities", [])]
             message = STTResultMessage(
@@ -36,7 +45,7 @@ class VoiceSession:
             )
             await self.handle_stt_result(message)
 
-        self.stt.connect()
+        self.connection.connect()
 
     async def run(self) -> None:
         await self.websocket.accept()
@@ -46,11 +55,13 @@ class VoiceSession:
             while True:
                 message = await self.websocket.receive()
                 if "bytes" in message:
-                    await self.stt.send(message["bytes"])
+                    if self.connection:
+                        await self.connection.send(message["bytes"])
                 elif "text" in message:
                     await self.handle_client_message(message["text"])
         except WebSocketDisconnect:
-            await self.stt.close()
+            if self.connection:
+                await self.connection.close()
 
     async def handle_client_message(self, text_data: str) -> None:
         try:
@@ -70,25 +81,25 @@ class VoiceSession:
             await self.websocket.send_json({"type": "error", "message": "Unknown message type"})
 
     async def handle_stt_result(self, message: STTResultMessage) -> None:
-        phrase_id = message.phrase_id or self.state.next_phrase_id()
+        interaction_id = message.interaction_id or self.state.next_interaction_id()
         entities = await enrich_entities_with_llm(message)
-        result = self.state.set_result(phrase_id=phrase_id, text=message.text, entities=entities)
+        result = self.state.set_result(interaction_id=interaction_id, text=message.text, entities=entities)
 
         await self.send_result(result)
         await self.websocket.send_json(
             {
                 "type": "prompt_confirmation",
-                "phrase_id": phrase_id,
+                "interaction_id": interaction_id,
                 "prompt": f"Are you confirming: {result.text}?",
             }
         )
 
     async def handle_confirm(self, message: ConfirmMessage) -> None:
-        result = self.state.confirm(phrase_id=message.phrase_id, confirmed=message.confirmed)
+        result = self.state.confirm(interaction_id=message.interaction_id, confirmed=message.confirmed)
         await self.send_result(result)
 
         if not message.confirmed:
-            await self.websocket.send_json(RetryMessage(phrase_id=message.phrase_id).model_dump())
+            await self.websocket.send_json(RetryMessage(interaction_id=message.interaction_id).model_dump())
 
     async def handle_request_state(self, message: RequestStateMessage) -> None:
         await self.websocket.send_json(
