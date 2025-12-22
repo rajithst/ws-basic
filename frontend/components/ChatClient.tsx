@@ -32,8 +32,10 @@ export function ChatClient() {
   const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
   const [inputText, setInputText] = useState("This is a demo utterance");
   const [log, setLog] = useState<string[]>([]);
+  const [isRecording, setIsRecording] = useState(false);
 
   const socketRef = useRef<WebSocket | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
   useEffect(() => {
     const socket = new WebSocket(wsUrl);
@@ -56,9 +58,50 @@ export function ChatClient() {
 
     return () => {
       socket.close();
+      stopRecording();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = async (event) => {
+        if (event.data.size > 0 && socketRef.current?.readyState === WebSocket.OPEN) {
+          // Send raw bytes
+          const arrayBuffer = await event.data.arrayBuffer();
+          socketRef.current.send(arrayBuffer);
+        }
+      };
+
+      mediaRecorder.start(100); // Send chunks every 100ms
+      setIsRecording(true);
+      pushLog("Started recording");
+    } catch (err) {
+      console.error("Error accessing microphone:", err);
+      pushLog("Error accessing microphone");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
+      setIsRecording(false);
+      pushLog("Stopped recording");
+    }
+  };
+
+  const toggleRecording = () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  };
 
   const handleServerMessage = (msg: ServerMessage) => {
     switch (msg.type) {
@@ -165,6 +208,24 @@ export function ChatClient() {
       </header>
 
       <section style={{ marginTop: 16, padding: 16, background: "#1e293b", borderRadius: 12 }}>
+        <div style={{ fontWeight: 700, marginBottom: 8 }}>Voice Input</div>
+        <button
+          onClick={toggleRecording}
+          style={{
+            padding: "12px 20px",
+            borderRadius: 8,
+            background: isRecording ? "#ef4444" : "#3b82f6",
+            color: "#ffffff",
+            border: "none",
+            fontWeight: 700,
+            fontSize: 16,
+            width: "100%",
+            marginBottom: 16,
+          }}
+        >
+          {isRecording ? "Stop Recording" : "Start Recording"}
+        </button>
+
         <div style={{ fontWeight: 700, marginBottom: 8 }}>Simulate STT payload</div>
         <textarea
           value={inputText}
