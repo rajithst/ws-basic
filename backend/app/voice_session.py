@@ -49,17 +49,28 @@ class VoiceSession:
 
     async def run(self) -> None:
         await self.websocket.accept()
-        await self.websocket.send_json(ReadyMessage().model_dump())
+        try:
+            await self.websocket.send_json(ReadyMessage().model_dump())
+        except WebSocketDisconnect:
+            # Client disconnected immediately after accept
+            if self.connection:
+                await self.connection.close()
+            return
 
         try:
             while True:
                 message = await self.websocket.receive()
+                if message["type"] == "websocket.disconnect":
+                    break
+                
                 if "bytes" in message:
                     if self.connection:
                         await self.connection.send(message["bytes"])
                 elif "text" in message:
                     await self.handle_client_message(message["text"])
         except WebSocketDisconnect:
+            pass
+        finally:
             if self.connection:
                 await self.connection.close()
 

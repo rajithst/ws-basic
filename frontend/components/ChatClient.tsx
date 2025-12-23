@@ -22,7 +22,7 @@ type ServerMessage =
   | { type: "retry"; interaction_id: string }
   | { type: "state"; results: Result[] };
 
-const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/ws";
+const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://127.0.0.1:8000/ws";
 
 export function ChatClient() {
   const [connected, setConnected] = useState(false);
@@ -46,9 +46,14 @@ export function ChatClient() {
       pushLog("Connected to backend");
     };
 
-    socket.onclose = () => {
+    socket.onerror = (error) => {
+      console.error("WebSocket error observed:", error);
+      pushLog(`WebSocket error. State: ${socket.readyState}`);
+    };
+
+    socket.onclose = (event) => {
       setConnected(false);
-      pushLog("Disconnected");
+      pushLog(`Disconnected: ${event.code} ${event.reason}`);
     };
 
     socket.onmessage = (event) => {
@@ -57,7 +62,9 @@ export function ChatClient() {
     };
 
     return () => {
-      socket.close();
+      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+        socket.close();
+      }
       stopRecording();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

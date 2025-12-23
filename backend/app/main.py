@@ -1,6 +1,6 @@
 from typing import Dict
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
@@ -25,5 +25,13 @@ async def health() -> Dict[str, str]:
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
-    session = VoiceSession(websocket)
-    await session.run()
+    print("New WebSocket connection request")
+    try:
+        session = VoiceSession(websocket)
+        await session.run()
+    except WebSocketDisconnect:
+        print("WebSocket disconnected")
+    except Exception as e:
+        print(f"Error in websocket session: {e}")
+        # Don't raise, just log
+
